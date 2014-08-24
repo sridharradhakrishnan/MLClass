@@ -1,0 +1,138 @@
+```{r,warning=FALSE,message=FALSE,results='hide',echo=FALSE}
+library(caret)
+library(ggplot2)
+library(psych)
+library(randomForest)
+```
+
+---
+title: "MLProject"
+author: "Sridhar Radhakrishnan"
+date: "August 23, 2014"
+output: html_document
+---
+
+Background
+===================================
+
+Data from accelerometers are being used to monitor human activities with the aim of analyzing this to improve their health. [Researchers in Brazil](http://groupware.les.inf.puc-rio.br/har) collected data from accelerometers placed on the belt, forearm, arm, and dumbell were gathered from 6 participants. The participants were asked to lift barbell correctly and incorrectly in five different ways: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Each participant was asked to do each of these 10 different times.
+
+About Data
+===================================
+
+Two set of data sets were created: a) [training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and b) [testing](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv). We will now load the datasets.
+
+```{r, echo=TRUE}
+testing <- read.table("./pml-testing.csv", sep = ",", header = TRUE)
+training <- read.table("./pml-training.csv", sep = ",", header = TRUE)
+```
+
+The training data has `r nrow(training)` observations on `r length(training)` attributes and the testing data
+has `r nrow(testing)` observations on `r length(testing)`. The additional attributes in the training dataset is "classe" which needs to be predicted. In the next sequence of steps we will remove some attributes based on the following criteria: a) remove columns 1-7 which are qualitative attributes such as username etc, b) remove attributes that has a "na" in any of the rows, c) remove attributes whose standard deviation is between 5 and 50, and d) remove attributes that deals with skewness or kurtosis. After this the number of attributes that are used for predicting "classe" attribute will be 11.
+
+Loading and preprocessing the data
+===================================
+
+First read the data file that is a csv file and contains the header
+
+```{r, echo=TRUE}
+#
+## Remove columns that are qualitative the first seven columns
+#
+testing <- testing[,c(8:160)]                      
+training <- training[,c(8:160)]            
+#
+## Remove columns that contains na in any of the rows
+#
+i <- sapply(training,function(x) any(is.na(x)))
+training <- training[,!i]
+testing <- testing[,!i]
+classeColumn <- training[,c("classe")] # Select the column that has the attribute classe
+#
+## Find the attribute statistics to select only attributes that has the standard deviation between 5 and 50
+#
+d <- describe(training)
+s <- subset(data.frame(d),(d$sd >= 5.0) & (d$sd <= 50.0))
+testing <- testing[,names(training)[s[,1]]]
+training <- training[,names(training)[s[,1]]]
+training <- cbind(training,classeColumn)
+#
+## Remove attributes that deals with skewness or kurtosis
+#
+training <- training[,!(names(training) %in% names(training)[grep("skew",names(training))])]
+training <- training[,!(names(training) %in% names(training)[grep("kurt",names(training))])]
+testing <- testing[,!(names(testing) %in% names(testing)[grep("skew",names(testing))])]
+testing <- testing[,!(names(testing) %in% names(testing)[grep("kurt",names(testing))])]
+```
+
+The following set of `r length(names(testing))` attributes are choosen to determine the outcome classe:
+`r names(testing)`
+
+How the model was built 
+============================================================
+
+In order to build the model we first partitioned training set into two (60% trainData and 40% testData). We would like to take the training data to this validation to determine the effectiveness of our final model against the testing data set.  
+
+```{r, echo=TRUE}
+inTrain <- createDataPartition(y=training$classeColumn,p=0.6,list=FALSE)
+trainData <- training[inTrain,]
+testData <- training[-inTrain,]
+```
+
+We have chosen the randomForest() method to predict classeColumn (same as classe attribute) and used the predict method on the testData (obtained from the training data).
+
+```{r, echo=TRUE}
+modFit <- randomForest(classeColumn ~ ., data=trainData,ntree=2000)
+prediction <- predict(modFit,newdata=testData)
+```
+
+The following graph shows the importance of various attributes in determining the attribute classeColumn (same as classe). It clearly says that pitch_belt, pitch_forearm, magnet_belt_y, and pitch_dumbell are the top four important attributes that determines classe attribute.
+
+```{r, echo=TRUE}
+varImpPlot(modFit)
+```
+
+The following predictors were actually used as part of the RandomForest method:
+`r varUsed(modFit)`.
+
+How the cross-validation was performed and Out-of-Bag Error (sample error)
+===========================================================================
+
+The following plot shows the relationship between classeColumn (classe) attribute and four attributes:
+
+```{r, echo=FALSE}
+featurePlot(x=training[,c("pitch_belt","pitch_forearm","magnet_belt_y","pitch_dumbbell","total_accel_dumbbell")],
+            y=training$classeColumn,plot="pairs")
+```
+
+The random forest model allows for cross-validation using the function rfcv.
+
+```{r, echo=TRUE}
+rf <- rfcv(trainx=training[,-12],trainy=training[,12],cv.fold=3)
+```
+```{r, echo=FALSE}
+x1 <- data.frame(rf$predicted)[1]
+x2 <- data.frame(rf$predicted)[2]
+```
+
+The predicted effectiveness with 11 variables is `r (sum(training$classeColumn == x1$X11)/nrow(training))*100` precent and with 6 variables is `r (sum(training$classeColumn == x2$X6)/nrow(training))*100` percent.
+
+With the above paritions, we show the effectiveness of our prediction:
+```{r, echo=TRUE}
+table(prediction,testData$classeColumn)
+```
+
+The effectivess of our prediction model based on the training data subsets is 
+`r (sum(testData$classeColumn==prediction) / nrow(testData))*100`. The attributes that were selected were adjusted based on the standard deviation to derive the approrpriate effectiveness percentage.  
+
+Final Model
+==========================================
+
+The final model is determined and the prediction is performed on the testing data.
+The results of the testing showed that there were 100% agreement as predicted by the model.
+
+```{r, echo=TRUE}
+model <- randomForest(classeColumn ~ ., data = training,ntree=2000)
+predFinal <- predict(model,testing)
+```
+
